@@ -73,7 +73,7 @@ def pull(
 
     Examples:
 
-        airllama pull TinyLlama/TinyLlama-1.1B-Chat-v1.0
+        airllama pull mistralai/Mistral-7B-Instruct-v0.2
 
         airllama pull microsoft/phi-2
 
@@ -154,7 +154,7 @@ def rm(
 
     Examples:
 
-        airllama rm TinyLlama/TinyLlama-1.1B-Chat-v1.0
+        airllama rm mistralai/Mistral-7B-Instruct-v0.2
     """
     try:
         model_manager._load_registry()
@@ -177,7 +177,7 @@ def show(
 
     Examples:
 
-        airllama show TinyLlama/TinyLlama-1.1B-Chat-v1.0
+        airllama show mistralai/Mistral-7B-Instruct-v0.2
     """
     try:
         model_manager._load_registry()
@@ -257,7 +257,7 @@ def run(
 
     Examples:
 
-        airllama run TinyLlama/TinyLlama-1.1B-Chat-v1.0 "Why is the sky blue?"
+        airllama run mistralai/Mistral-7B-Instruct-v0.2 "Why is the sky blue?"
 
         airllama run microsoft/phi-2 "Write a poem about autumn"
     """

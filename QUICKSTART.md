@@ -100,10 +100,14 @@ INFO:     Uvicorn running on http://0.0.0.0:11434
 In a second terminal (with the venv activated):
 
 ```bash
-airllama pull TinyLlama/TinyLlama-1.1B-Chat-v1.0
+airllama pull mistralai/Mistral-7B-Instruct-v0.2
 ```
 
-Download progress is shown in the **server** terminal. The pull command will print status updates and confirm when complete.
+This downloads ~14 GB of model shards. Download progress is shown in the **server** terminal.
+The pull command prints status updates and confirms when complete.
+
+> **Why Mistral 7B?** AirLLM requires models stored as multiple shards (typically 7B+ parameters).
+> Smaller single-file models like TinyLlama 1.1B are **not compatible** with AirLLM.
 
 For gated models (e.g. Llama 3), set `HF_TOKEN=` in `.env` first.
 
@@ -131,21 +135,21 @@ curl http://localhost:11434/api/tags
 
 # Generate (non-streaming)
 curl http://localhost:11434/api/generate -d '{
-  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "model": "mistralai/Mistral-7B-Instruct-v0.2",
   "prompt": "What is 2+2?",
   "stream": false
 }'
 
 # Chat
 curl http://localhost:11434/api/chat -d '{
-  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "model": "mistralai/Mistral-7B-Instruct-v0.2",
   "messages": [{"role": "user", "content": "Tell me a short joke"}],
   "stream": false
 }'
 
 # Streaming generation
 curl http://localhost:11434/api/generate -d '{
-  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "model": "mistralai/Mistral-7B-Instruct-v0.2",
   "prompt": "Count from 1 to 5:",
   "stream": true
 }'
@@ -154,7 +158,7 @@ curl http://localhost:11434/api/generate -d '{
 curl http://localhost:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "model": "mistralai/Mistral-7B-Instruct-v0.2",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
@@ -174,7 +178,7 @@ This sends a single non-streaming request to `/api/generate` and prints the JSON
 ## 8. Interactive mode
 
 ```bash
-airllama run TinyLlama/TinyLlama-1.1B-Chat-v1.0
+airllama run mistralai/Mistral-7B-Instruct-v0.2
 ```
 
 Type your prompt and press Enter. Type `/bye` to exit.
@@ -193,10 +197,10 @@ pip install ollama openai
 from ollama import Client
 
 client = Client(host='http://localhost:11434')
-client.pull('TinyLlama/TinyLlama-1.1B-Chat-v1.0')
+client.pull('mistralai/Mistral-7B-Instruct-v0.2')
 
 response = client.generate(
-    model='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+    model='mistralai/Mistral-7B-Instruct-v0.2',
     prompt='Explain what AI is in one sentence.'
 )
 print(response['response'])
@@ -210,7 +214,7 @@ from openai import OpenAI
 client = OpenAI(base_url='http://localhost:11434/v1', api_key='unused')
 
 response = client.chat.completions.create(
-    model='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
+    model='mistralai/Mistral-7B-Instruct-v0.2',
     messages=[{'role': 'user', 'content': 'What is Python?'}]
 )
 print(response.choices[0].message.content)

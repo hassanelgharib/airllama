@@ -72,9 +72,7 @@ DEFAULT_MAX_LENGTH=2048
 DEFAULT_MAX_NEW_TOKENS=512
 ```
 
-> **All platforms:** Do not put comments on the same line as a value (`VALUE=foo # comment`).
-> pydantic-settings will include the comment text in the value. Keep comments on their own lines.
->
+
 > **MODEL_CACHE_DIR** expands `~` correctly on all platforms:
 > `C:\Users\<user>\.cache\airllm` on Windows, `/home/<user>/.cache/airllm` on Linux, `/Users/<user>/.cache/airllm` on macOS.
 
@@ -265,12 +263,16 @@ Any HuggingFace model supported by AirLLM works — including:
 - **Baichuan**
 - **InternLM**
 
+> **Requirement:** AirLLM only supports **multi-shard models** (those with a `model.safetensors.index.json`).
+> This typically means **7B+ parameter models**. Small single-file models (e.g. TinyLlama 1.1B) will fail
+> with a clear error message.
+
 Use the full HuggingFace repo ID as the model name:
 
 ```
-TinyLlama/TinyLlama-1.1B-Chat-v1.0
 mistralai/Mistral-7B-Instruct-v0.2
 meta-llama/Llama-3.1-8B-Instruct    <- requires HF_TOKEN
+Qwen/Qwen2-7B-Instruct
 ```
 
 > Ollama-style short names like `llama3:8b` are **not** supported — always use the full HuggingFace ID.
