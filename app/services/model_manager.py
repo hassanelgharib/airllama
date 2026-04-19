@@ -9,18 +9,102 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
+import torch
 from airllm import AutoModel
 from airllm.airllm_base import AirLLMBaseModel
 from transformers import AutoConfig
 
-# Newer transformers (≥4.40) requires GenerationMixin subclasses to declare
-# _is_stateful. The installed airllm package predates this requirement.
-if not hasattr(AirLLMBaseModel, "_is_stateful"):
-    AirLLMBaseModel._is_stateful = False
-
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# AirLLM ↔ newer-transformers compatibility patches
+# Applied once at import time; safe to apply even if the model is not Qwen2.
+# ---------------------------------------------------------------------------
+
+# 1. _is_stateful — required by GenerationMixin in transformers ≥ 4.40.
+if not hasattr(AirLLMBaseModel, "_is_stateful"):
+    AirLLMBaseModel._is_stateful = False
+
+# 2. Qwen2DecoderLayer patches for transformers ≥ 4.45:
+#    a) position_embeddings (cos/sin) is now a required argument computed at the
+#       Qwen2Model level and shared across all layers.  AirLLM calls each layer
+#       individually without this pre-computation, so we inject a reference to
+#       the model's Qwen2RotaryEmbedding (_rotary_emb) on each layer and compute
+#       it on the fly when it is absent.
+#    b) forward() now returns a plain Tensor instead of a tuple.  AirLLM's loop
+#       does `layer(...)[0]`, which on a plain Tensor strips the batch dimension.
+#       Wrapping in a 1-tuple restores the old behaviour.
+#    c) The 4-D boolean mask AirLLM builds is only correct for SDPA; for eager
+#       attention it must be a float mask (0 = attend, -inf = mask).
+try:
+    from transformers.models.qwen2.modeling_qwen2 import Qwen2DecoderLayer as _Qwen2DL
+    _orig_qwen2_dl_fwd = _Qwen2DL.forward
+
+    def _qwen2_dl_fwd_compat(
+        self,
+        hidden_states,
+        attention_mask=None,
+        position_ids=None,
+        past_key_values=None,
+        use_cache=False,
+        cache_position=None,
+        position_embeddings=None,
+        **kwargs,
+    ):
+        # a) compute RoPE embeddings when the caller didn't provide them
+        if position_embeddings is None:
+            _re = getattr(self, "_rotary_emb", None)
+            if _re is not None and position_ids is not None:
+                position_embeddings = _re(hidden_states, position_ids)
+
+        # c) convert boolean causal mask → float additive mask so that both
+        #    SDPA and eager attention paths receive a compatible format
+        if attention_mask is not None and attention_mask.dtype == torch.bool:
+            float_mask = torch.zeros(
+                attention_mask.shape, dtype=hidden_states.dtype, device=hidden_states.device
+            )
+            float_mask = float_mask.masked_fill(~attention_mask, float("-inf"))
+            attention_mask = float_mask
+
+        result = _orig_qwen2_dl_fwd(
+            self,
+            hidden_states,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            cache_position=cache_position,
+            position_embeddings=position_embeddings,
+            **kwargs,
+        )
+        # b) wrap plain-Tensor return so that layer(...)[0] gives the full
+        #    3-D hidden-state tensor rather than stripping the batch dimension
+        return (result,) if isinstance(result, torch.Tensor) else result
+
+    _Qwen2DL.forward = _qwen2_dl_fwd_compat
+    logger.debug("Patched Qwen2DecoderLayer.forward for AirLLM compatibility")
+except Exception as _patch_err:
+    logger.debug(f"Qwen2DecoderLayer patch skipped: {_patch_err}")
+
+# 3. After AirLLM rebuilds its model on every forward() call (it calls
+#    init_model() each time), inject a _rotary_emb reference into every decoder
+#    layer so patch #2 can compute position_embeddings.
+_orig_airllm_init_model = AirLLMBaseModel.init_model
+
+def _patched_airllm_init_model(self):
+    _orig_airllm_init_model(self)
+    try:
+        inner = getattr(self.model, "model", None)
+        rotary = getattr(inner, "rotary_emb", None)
+        if rotary is not None and hasattr(inner, "layers"):
+            for _dl in inner.layers:
+                _dl._rotary_emb = rotary
+    except Exception:
+        pass
+
+AirLLMBaseModel.init_model = _patched_airllm_init_model
 
 
 @dataclass
