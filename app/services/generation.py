@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import sys
 import time
 from threading import Thread
 from typing import Dict, List, Any, Optional, AsyncIterator
