@@ -122,8 +122,10 @@ class ModelManager:
             
             try:
                 # Prepare kwargs
+                layer_shards_path = settings.cache_path / "layers" / model_name.replace("/", "_")
+                layer_shards_path.mkdir(parents=True, exist_ok=True)
                 model_kwargs = {
-                    "layer_shards_saving_path": str(settings.cache_path / "layers" / model_name.replace("/", "_")),
+                    "layer_shards_saving_path": str(layer_shards_path),
                     "profiling_mode": False,
                 }
                 

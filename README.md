@@ -315,11 +315,12 @@ docker run -d \
 
 NVIDIA Jetson boards running **JetPack 6** ship with CUDA 12.6 but require a custom PyTorch wheel from NVIDIA's Jetson AI Lab — the standard PyPI wheels are compiled for x86-64 and will not work on ARM64.
 
-**Before** running `pip install -r requirements.txt`, install the Jetson-specific torch and torchvision:
+**Before** running `pip install -r requirements.txt`, install the Jetson-specific torch, torchvision, and a compatible NumPy:
 
 ```bash
 pip install torch==2.8.0 torchvision==0.23.0 \
   --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+pip install "numpy<2"
 ```
 
 Then install the rest of the dependencies as normal:
@@ -330,6 +331,7 @@ pip install -e .
 ```
 
 > The `--index-url` flag tells pip to fetch torch/torchvision from NVIDIA's Jetson wheel index instead of PyPI.
+> `numpy<2` is required because several AirLLM dependencies are not yet compatible with NumPy 2.x.
 > All other packages still come from PyPI.
 
 4-bit/8-bit quantization is supported on Jetson — set `DEFAULT_COMPRESSION=4bit` or `8bit` in `.env` once the CUDA-enabled torch is installed.
@@ -355,10 +357,11 @@ Set `HF_TOKEN=<your_token>` in `.env` and restart the server.
 Apple Silicon has no CUDA support. Leave `DEFAULT_COMPRESSION=` empty. Inference runs on CPU.
 
 **Jetson — `torch` not found or CUDA unavailable after install**
-Make sure you installed PyTorch from the Jetson AI Lab index *before* `pip install -r requirements.txt`:
+Make sure you installed PyTorch and NumPy from the correct sources *before* `pip install -r requirements.txt`:
 ```bash
 pip install torch==2.8.0 torchvision==0.23.0 \
   --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+pip install "numpy<2"
 ```
 Verify with `python -c "import torch; print(torch.cuda.is_available())"`.
 
