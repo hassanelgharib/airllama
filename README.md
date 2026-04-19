@@ -29,8 +29,8 @@ An Ollama-compatible server and CLI for running large language models locally us
 ## Installation
 
 ```bash
-git clone <your-repo-url>
-cd airllm-api-temp
+git clone https://github.com/hassanelgharib/airllama.git
+cd airllama
 
 # Create and activate a virtual environment (recommended)
 python -m venv .venv

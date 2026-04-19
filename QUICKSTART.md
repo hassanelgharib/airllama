@@ -17,8 +17,8 @@
 
 ```bash
 # Clone
-git clone <your-repo-url>
-cd airllm-api-temp
+git clone https://github.com/hassanelgharib/airllama.git
+cd airllama
 
 # Create venv
 python -m venv .venv
