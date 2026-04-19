@@ -103,7 +103,7 @@ class GenerationService:
             input_tokens = tokenizer(
                 prompt,
                 return_tensors="pt",
-                return_attention_mask=False,
+                return_attention_mask=True,
                 truncation=True,
                 max_length=settings.default_max_length,
                 padding=False
@@ -118,7 +118,7 @@ class GenerationService:
         # Prepare generation parameters
         gen_kwargs = {
             "max_new_tokens": max_new_tokens,
-            "use_cache": True,
+            "use_cache": False,  # AirLLM disables KV cache internally; passing True causes NoneType errors
             "return_dict_in_generate": True,
             "do_sample": temperature > 0,
         }
@@ -130,20 +130,22 @@ class GenerationService:
         
         if seed is not None:
             torch.manual_seed(seed)
-            gen_kwargs["seed"] = seed
         
         # Update with any additional kwargs
         gen_kwargs.update(kwargs)
         
         # Move to GPU if available
         input_ids = input_tokens['input_ids']
+        attention_mask = input_tokens.get('attention_mask')
         if torch.cuda.is_available():
             input_ids = input_ids.cuda()
+            if attention_mask is not None:
+                attention_mask = attention_mask.cuda()
         
         # Generate
         generation_start = time.time()
         try:
-            generation_output = model.generate(input_ids, **gen_kwargs)
+            generation_output = model.generate(input_ids, attention_mask=attention_mask, **gen_kwargs)
         except Exception as e:
             logger.error(f"Generation failed: {e}")
             raise
