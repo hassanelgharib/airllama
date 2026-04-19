@@ -212,13 +212,16 @@ class ModelManager:
                     return None
 
                 def _create_lm_head_shard(split_dir: Path, embed_weight) -> bool:
-                    """Save embed_weight as lm_head.safetensors. Returns True on success."""
+                    """Save embed_weight as lm_head.safetensors + lm_head.safetensors.done marker.
+                    AirLLM's SafetensorModelPersister.model_persist_exist() requires BOTH files."""
                     try:
                         from safetensors.torch import save_file as _st_save
                         lm_head_file = split_dir / "lm_head.safetensors"
+                        done_marker = split_dir / "lm_head.safetensors.done"
                         split_dir.mkdir(parents=True, exist_ok=True)
                         _st_save({"lm_head.weight": embed_weight}, str(lm_head_file))
-                        logger.info(f"Created tied lm_head shard: {lm_head_file}")
+                        done_marker.touch()
+                        logger.info(f"Created tied lm_head shard + .done marker: {lm_head_file}")
                         return True
                     except Exception as e:
                         logger.warning(f"Failed to save lm_head shard: {e}", exc_info=True)
@@ -235,8 +238,9 @@ class ModelManager:
                     """
                     split_dir = layer_shards_path / "splitted_model"
                     lm_head_file = split_dir / "lm_head.safetensors"
+                    done_marker = split_dir / "lm_head.safetensors.done"
 
-                    if lm_head_file.exists():
+                    if lm_head_file.exists() and done_marker.exists():
                         logger.info(f"Tied lm_head shard already exists: {lm_head_file}")
                         return True
 
@@ -314,6 +318,7 @@ class ModelManager:
                         # "re-save all" path overwrote then deleted it. Delete and recreate.
                         logger.warning("Post-crash: lm_head shard exists but load still crashed — recreating from HF cache")
                         lm_head_file.unlink(missing_ok=True)
+                        (split_dir / "lm_head.safetensors.done").unlink(missing_ok=True)
                         embed_weight = _find_embed_weight_from_hf_cache()
                         if embed_weight is not None:
                             fixed = _create_lm_head_shard(split_dir, embed_weight)
