@@ -53,9 +53,13 @@ try:
         position_embeddings=None,
         **kwargs,
     ):
-        # a) compute RoPE embeddings when the caller didn't provide them
+        # a) compute RoPE embeddings when the caller didn't provide them.
+        # _rotary_emb_list is a plain Python list (NOT an nn.Module attribute) so
+        # layer.to("meta") will NOT register it as a submodule and will NOT move
+        # the shared rotary_emb to meta when adjacent layers are processed.
         if position_embeddings is None:
-            _re = getattr(self, "_rotary_emb", None)
+            _re_list = getattr(self, "_rotary_emb_list", None)
+            _re = _re_list[0] if _re_list else None
             if _re is not None and position_ids is not None:
                 position_embeddings = _re(hidden_states, position_ids)
 
@@ -89,20 +93,33 @@ except Exception as _patch_err:
     logger.debug(f"Qwen2DecoderLayer patch skipped: {_patch_err}")
 
 # 3. After AirLLM rebuilds its model on every forward() call (it calls
-#    init_model() each time), inject a _rotary_emb reference into every decoder
-#    layer so patch #2 can compute position_embeddings.
+#    init_model() each time), inject a _rotary_emb_list reference into every
+#    decoder layer so patch #2 can compute position_embeddings.
+#    Key details:
+#    - Recreate rotary_emb OUTSIDE init_empty_weights() so inv_freq has real data
+#      (under init_empty_weights, inv_freq is a meta tensor with no values).
+#    - Store as _rotary_emb_list (a plain Python list, NOT an nn.Module attribute)
+#      so that layer.to("meta") does NOT register it as a submodule and does NOT
+#      wipe the shared object when each layer is evicted after use.
 _orig_airllm_init_model = AirLLMBaseModel.init_model
 
 def _patched_airllm_init_model(self):
     _orig_airllm_init_model(self)
     try:
         inner = getattr(self.model, "model", None)
-        rotary = getattr(inner, "rotary_emb", None)
-        if rotary is not None and hasattr(inner, "layers"):
-            for _dl in inner.layers:
-                _dl._rotary_emb = rotary
-    except Exception:
-        pass
+        if inner is None or not hasattr(inner, "rotary_emb") or not hasattr(inner, "layers"):
+            return
+        # Recreate rotary embedding with real (non-meta) inv_freq data
+        old_rotary = inner.rotary_emb
+        new_rotary = type(old_rotary)(config=self.config)
+        new_rotary.to(self.running_device)
+        inner.rotary_emb = new_rotary
+        for _dl in inner.layers:
+            # plain list — PyTorch does NOT register list attributes as submodules,
+            # so layer.to("meta") will leave this list (and its contents) untouched
+            _dl._rotary_emb_list = [new_rotary]
+    except Exception as e:
+        logger.debug(f"rotary_emb reinit skipped: {e}")
 
 AirLLMBaseModel.init_model = _patched_airllm_init_model
 
