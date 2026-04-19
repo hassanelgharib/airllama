@@ -1,5 +1,6 @@
 """Model lifecycle management for AirLLM models."""
 
+import shutil
 import asyncio
 import json
 import logging
@@ -142,20 +143,40 @@ class ModelManager:
                 # Run the blocking AutoModel.from_pretrained in a thread so the
                 # event loop stays responsive during model initialisation.
                 loop = asyncio.get_running_loop()
+
+                async def _try_load() -> Any:
+                    try:
+                        return await loop.run_in_executor(
+                            None,
+                            lambda: AutoModel.from_pretrained(model_name, **model_kwargs),
+                        )
+                    except AssertionError as ae:
+                        msg = str(ae)
+                        if "safetensors.index.json should exist" in msg or "pytorch_model.bin.index.json" in msg:
+                            raise RuntimeError(
+                                f"Model '{model_name}' appears to be a single-file model (no shard index found). "
+                                "AirLLM requires multi-shard models (typically 7B+ parameters). "
+                                "Try a larger model such as mistralai/Mistral-7B-Instruct-v0.2."
+                            ) from ae
+                        raise
+
                 try:
-                    model = await loop.run_in_executor(
-                        None,
-                        lambda: AutoModel.from_pretrained(model_name, **model_kwargs),
-                    )
-                except AssertionError as ae:
-                    msg = str(ae)
-                    if "safetensors.index.json should exist" in msg or "pytorch_model.bin.index.json" in msg:
-                        raise RuntimeError(
-                            f"Model '{model_name}' appears to be a single-file model (no shard index found). "
-                            "AirLLM requires multi-shard models (typically 7B+ parameters). "
-                            "Try a larger model such as mistralai/Mistral-7B-Instruct-v0.2."
-                        ) from ae
-                    raise
+                    model = await _try_load()
+                except (IndexError, RuntimeError, Exception) as first_err:
+                    # A stale/partial layer-shard cache (e.g. from a previous failed run)
+                    # can cause AirLLM's re-save path to crash with IndexError on
+                    # weight-tied heads (lm_head tied to embed_tokens).
+                    # Wipe the cache directory and retry once with a clean slate.
+                    if layer_shards_path.exists() and any(layer_shards_path.iterdir()):
+                        logger.warning(
+                            f"Load failed ({first_err}); clearing stale layer cache at "
+                            f"{layer_shards_path} and retrying..."
+                        )
+                        shutil.rmtree(layer_shards_path)
+                        layer_shards_path.mkdir(parents=True, exist_ok=True)
+                        model = await _try_load()
+                    else:
+                        raise
 
                 # Store model info
                 model_info = {
