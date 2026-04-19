@@ -30,6 +30,13 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
+> **NVIDIA Jetson (JetPack 6):** Install PyTorch from the Jetson AI Lab wheel index *first*, before the line above:
+> ```bash
+> pip install torch==2.8.0 torchvision==0.23.0 \
+>   --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+> ```
+> Standard PyPI torch wheels are x86-64 only and will not work on Jetson ARM64.
+
 Verify the CLI is available:
 
 ```bash

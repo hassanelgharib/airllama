@@ -21,6 +21,7 @@ An Ollama-compatible server and CLI for running large language models locally us
 | Linux | ✅ | ✅ (NVIDIA GPU + CUDA) | Recommended platform for GPU inference |
 | macOS (Intel) | ✅ | ✅ (NVIDIA eGPU only) | Rare; treat as CPU-only in practice |
 | macOS (Apple Silicon) | ✅ | ❌ | No CUDA support — MPS/Metal not supported by bitsandbytes; CPU mode only |
+| NVIDIA Jetson (JetPack 6) | ✅ | ✅ (CUDA 12.6) | Requires custom PyTorch wheel — see [Jetson Installation](#jetson-installation) |
 
 > **`DEFAULT_COMPRESSION` must be left empty on any machine without an NVIDIA CUDA GPU.**
 
@@ -43,6 +44,8 @@ pip install -r requirements.txt
 # Install the airllama CLI
 pip install -e .
 ```
+
+> **Jetson boards (JetPack OS):** See [Jetson Installation](#jetson-installation) for required PyTorch setup before running `pip install -r requirements.txt`.
 
 ---
 
@@ -308,6 +311,31 @@ docker run -d \
 
 ---
 
+## Jetson Installation
+
+NVIDIA Jetson boards running **JetPack 6** ship with CUDA 12.6 but require a custom PyTorch wheel from NVIDIA's Jetson AI Lab — the standard PyPI wheels are compiled for x86-64 and will not work on ARM64.
+
+**Before** running `pip install -r requirements.txt`, install the Jetson-specific torch and torchvision:
+
+```bash
+pip install torch==2.8.0 torchvision==0.23.0 \
+  --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+```
+
+Then install the rest of the dependencies as normal:
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+> The `--index-url` flag tells pip to fetch torch/torchvision from NVIDIA's Jetson wheel index instead of PyPI.
+> All other packages still come from PyPI.
+
+4-bit/8-bit quantization is supported on Jetson — set `DEFAULT_COMPRESSION=4bit` or `8bit` in `.env` once the CUDA-enabled torch is installed.
+
+---
+
 ## Troubleshooting
 
 **`bitsandbytes` error on CPU-only machine**
@@ -325,6 +353,14 @@ Set `HF_TOKEN=<your_token>` in `.env` and restart the server.
 
 **macOS Apple Silicon — `bitsandbytes` or CUDA error**
 Apple Silicon has no CUDA support. Leave `DEFAULT_COMPRESSION=` empty. Inference runs on CPU.
+
+**Jetson — `torch` not found or CUDA unavailable after install**
+Make sure you installed PyTorch from the Jetson AI Lab index *before* `pip install -r requirements.txt`:
+```bash
+pip install torch==2.8.0 torchvision==0.23.0 \
+  --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+```
+Verify with `python -c "import torch; print(torch.cuda.is_available())"`.
 
 **Windows PowerShell 5.1 — curl returns HTML or an error**
 `curl` in PS 5.1 calls `Invoke-WebRequest`, not the real curl binary. Use `curl.exe` instead:
