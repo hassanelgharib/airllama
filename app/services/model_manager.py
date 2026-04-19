@@ -160,52 +160,125 @@ class ModelManager:
                             ) from ae
                         raise
 
-                def _apply_tied_lm_head_fix() -> bool:
+                def _preemptive_tied_lm_head_fix() -> bool:
                     """
-                    Some models (e.g. Qwen2.5) set tie_word_embeddings=True, meaning
-                    lm_head.weight shares the same tensor as model.embed_tokens.weight
-                    and is NOT stored as a separate key in the safetensors shards.
-                    AirLLM crashes with IndexError when it can't find lm_head in the
-                    shards during layer splitting.
+                    Models with tie_word_embeddings=True (e.g. Qwen2.5, Phi) do not store
+                    lm_head.weight as a separate tensor in the safetensors shards — it is
+                    aliased to model.embed_tokens.weight. AirLLM crashes with IndexError
+                    when it tries to split that missing tensor.
 
-                    Fix: create lm_head.safetensors by loading model.embed_tokens.safetensors
-                    and saving it with the key renamed to lm_head.weight.
-                    Returns True if the fix was applied.
+                    Pre-create lm_head.safetensors from the original HuggingFace model
+                    files BEFORE AirLLM's splitting pass so that it sees the shard as
+                    already existing and skips it entirely.
+                    Returns True if the shard was created (or already existed).
                     """
+                    split_dir = layer_shards_path / "splitted_model"
+                    lm_head_file = split_dir / "lm_head.safetensors"
+                    if lm_head_file.exists():
+                        return True  # already handled
+
                     try:
-                        from safetensors.torch import load_file, save_file as st_save_file
-                        split_dir = layer_shards_path / "splitted_model"
-                        embed_file = split_dir / "model.embed_tokens.safetensors"
-                        lm_head_file = split_dir / "lm_head.safetensors"
-                        if embed_file.exists() and not lm_head_file.exists():
-                            tensors = load_file(str(embed_file))
-                            weight = tensors.get("model.embed_tokens.weight")
-                            if weight is not None:
-                                st_save_file({"lm_head.weight": weight}, str(lm_head_file))
-                                logger.info(f"Tied lm_head fix applied: created {lm_head_file}")
-                                return True
-                    except Exception as fix_err:
-                        logger.warning(f"Could not apply tied lm_head fix: {fix_err}")
-                    return False
+                        # Check model config for tie_word_embeddings
+                        cfg = AutoConfig.from_pretrained(
+                            model_name,
+                            token=settings.hf_token or None,
+                            trust_remote_code=True,
+                            local_files_only=True,
+                        )
+                        if not getattr(cfg, "tie_word_embeddings", False):
+                            return False
+                    except Exception as e:
+                        logger.debug(f"Tied lm_head pre-check: could not load config: {e}")
+                        return False
+
+                    try:
+                        # Locate the original HF cached model shards
+                        from huggingface_hub import snapshot_download as _snap
+                        local_path = _snap(
+                            model_name,
+                            local_files_only=True,
+                            token=settings.hf_token or None,
+                        )
+                    except Exception as e:
+                        logger.debug(f"Tied lm_head pre-check: snapshot_download failed: {e}")
+                        return False
+
+                    try:
+                        import glob
+                        from safetensors import safe_open
+                        from safetensors.torch import save_file as _st_save
+
+                        shard_files = sorted(
+                            glob.glob(f"{local_path}/model-*.safetensors") +
+                            glob.glob(f"{local_path}/model.safetensors")
+                        )
+                        if not shard_files:
+                            logger.debug("Tied lm_head pre-check: no safetensors shards found")
+                            return False
+
+                        embed_weight = None
+                        for shard_path in shard_files:
+                            with safe_open(shard_path, framework="pt") as f:
+                                for key in f.keys():
+                                    if "embed_tokens.weight" in key:
+                                        embed_weight = f.get_tensor(key)
+                                        break
+                            if embed_weight is not None:
+                                break
+
+                        if embed_weight is None:
+                            logger.debug("Tied lm_head pre-check: embed_tokens.weight not found")
+                            return False
+
+                        split_dir.mkdir(parents=True, exist_ok=True)
+                        _st_save({"lm_head.weight": embed_weight}, str(lm_head_file))
+                        logger.info(
+                            f"Pre-created tied lm_head shard at {lm_head_file} "
+                            f"(tie_word_embeddings=True for {model_name})"
+                        )
+                        return True
+                    except Exception as e:
+                        logger.warning(f"Tied lm_head pre-check: failed to create shard: {e}", exc_info=True)
+                        return False
+
+                # Pre-create lm_head shard for weight-tied models before AirLLM's
+                # splitting pass so the IndexError never occurs.
+                await loop.run_in_executor(None, _preemptive_tied_lm_head_fix)
 
                 try:
                     model = await _try_load()
                 except IndexError as first_err:
-                    # IndexError during layer splitting = weight-tied lm_head
-                    # (lm_head.weight not stored separately in the safetensors shards).
-                    # Try to create the missing shard from embed_tokens without
-                    # discarding the already-split layers.
-                    fixed = await loop.run_in_executor(None, _apply_tied_lm_head_fix)
+                    # Fallback: post-crash attempt using the already-split embed shard.
+                    # This handles the case where the preemptive fix couldn't run (e.g.
+                    # model config not in local cache yet on the very first pull).
+                    logger.warning(
+                        f"IndexError during layer splitting ({first_err}); "
+                        "attempting post-crash tied lm_head fix..."
+                    )
+                    split_dir = layer_shards_path / "splitted_model"
+                    lm_head_file = split_dir / "lm_head.safetensors"
+                    embed_file = split_dir / "model.embed_tokens.safetensors"
+                    fixed = False
+                    if embed_file.exists() and not lm_head_file.exists():
+                        try:
+                            from safetensors.torch import load_file as _lt_load
+                            from safetensors.torch import save_file as _lt_save
+                            tensors = _lt_load(str(embed_file))
+                            # Key may be full path or just "weight" depending on AirLLM version
+                            weight = (
+                                tensors.get("model.embed_tokens.weight")
+                                or tensors.get("weight")
+                                or next(iter(tensors.values()), None)
+                            )
+                            if weight is not None:
+                                _lt_save({"lm_head.weight": weight}, str(lm_head_file))
+                                logger.info(f"Post-crash tied lm_head fix: created {lm_head_file}")
+                                fixed = True
+                        except Exception as fix_err:
+                            logger.warning(f"Post-crash tied lm_head fix failed: {fix_err}", exc_info=True)
+
                     if fixed:
                         logger.info("Retrying load after tied lm_head fix...")
-                        model = await _try_load()
-                    elif layer_shards_path.exists() and any(layer_shards_path.iterdir()):
-                        logger.warning(
-                            f"Load failed ({first_err}); clearing stale layer cache at "
-                            f"{layer_shards_path} and retrying..."
-                        )
-                        shutil.rmtree(layer_shards_path)
-                        layer_shards_path.mkdir(parents=True, exist_ok=True)
                         model = await _try_load()
                     else:
                         raise
