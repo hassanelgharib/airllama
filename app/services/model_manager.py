@@ -140,11 +140,21 @@ class ModelManager:
                 # Run the blocking AutoModel.from_pretrained in a thread so the
                 # event loop stays responsive during model initialisation.
                 loop = asyncio.get_running_loop()
-                model = await loop.run_in_executor(
-                    None,
-                    lambda: AutoModel.from_pretrained(model_name, **model_kwargs),
-                )
-                
+                try:
+                    model = await loop.run_in_executor(
+                        None,
+                        lambda: AutoModel.from_pretrained(model_name, **model_kwargs),
+                    )
+                except AssertionError as ae:
+                    msg = str(ae)
+                    if "safetensors.index.json should exist" in msg or "pytorch_model.bin.index.json" in msg:
+                        raise RuntimeError(
+                            f"Model '{model_name}' appears to be a single-file model (no shard index found). "
+                            "AirLLM requires multi-shard models (typically 7B+ parameters). "
+                            "Try a larger model such as mistralai/Mistral-7B-Instruct-v0.2."
+                        ) from ae
+                    raise
+
                 # Store model info
                 model_info = {
                     "model": model,
@@ -306,8 +316,11 @@ class ModelManager:
             if stream_progress:
                 yield {"status": "verifying sha256"}
 
-            # Initialise the AirLLM model object from the now-local cache.
-            await self.load_model(model_name)
+            # Register the model in the local registry without loading it into
+            # memory.  Loading (splitting into layers) happens lazily on first
+            # inference, matching Ollama's pull behaviour.
+            if model_name not in self.registry:
+                await self._register_model(model_name, None)
 
             if stream_progress:
                 yield {"status": "success"}
@@ -315,9 +328,22 @@ class ModelManager:
             logger.info(f"Successfully pulled model {model_name}")
 
         except Exception as e:
+            err_msg = str(e)
+            # Provide a clearer message for gated / private models
+            if "cannot find the requested files" in err_msg or "401" in err_msg or "403" in err_msg:
+                friendly = (
+                    f"Cannot download '{model_name}': access denied. "
+                    "This is likely a gated model. "
+                    "1) Accept the model license at https://huggingface.co/{model_name} "
+                    "2) Set HF_TOKEN=<your_token> in .env and restart the server."
+                ).replace("{model_name}", model_name)
+                logger.error(f"Failed to pull model {model_name}: {friendly}")
+                if stream_progress:
+                    yield {"status": "error", "error": friendly}
+                raise RuntimeError(friendly) from e
             logger.error(f"Failed to pull model {model_name}: {e}")
             if stream_progress:
-                yield {"status": "error", "error": str(e)}
+                yield {"status": "error", "error": err_msg}
             raise
     
     async def delete_model(self, model_name: str):
