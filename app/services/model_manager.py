@@ -160,13 +160,60 @@ class ModelManager:
                             ) from ae
                         raise
 
+                def _apply_tied_lm_head_fix() -> bool:
+                    """
+                    Some models (e.g. Qwen2.5) set tie_word_embeddings=True, meaning
+                    lm_head.weight shares the same tensor as model.embed_tokens.weight
+                    and is NOT stored as a separate key in the safetensors shards.
+                    AirLLM crashes with IndexError when it can't find lm_head in the
+                    shards during layer splitting.
+
+                    Fix: create lm_head.safetensors by loading model.embed_tokens.safetensors
+                    and saving it with the key renamed to lm_head.weight.
+                    Returns True if the fix was applied.
+                    """
+                    try:
+                        from safetensors.torch import load_file, save_file as st_save_file
+                        split_dir = layer_shards_path / "splitted_model"
+                        embed_file = split_dir / "model.embed_tokens.safetensors"
+                        lm_head_file = split_dir / "lm_head.safetensors"
+                        if embed_file.exists() and not lm_head_file.exists():
+                            tensors = load_file(str(embed_file))
+                            weight = tensors.get("model.embed_tokens.weight")
+                            if weight is not None:
+                                st_save_file({"lm_head.weight": weight}, str(lm_head_file))
+                                logger.info(f"Tied lm_head fix applied: created {lm_head_file}")
+                                return True
+                    except Exception as fix_err:
+                        logger.warning(f"Could not apply tied lm_head fix: {fix_err}")
+                    return False
+
                 try:
                     model = await _try_load()
-                except (IndexError, RuntimeError, Exception) as first_err:
-                    # A stale/partial layer-shard cache (e.g. from a previous failed run)
-                    # can cause AirLLM's re-save path to crash with IndexError on
-                    # weight-tied heads (lm_head tied to embed_tokens).
-                    # Wipe the cache directory and retry once with a clean slate.
+                except IndexError as first_err:
+                    # IndexError during layer splitting = weight-tied lm_head
+                    # (lm_head.weight not stored separately in the safetensors shards).
+                    # Try to create the missing shard from embed_tokens without
+                    # discarding the already-split layers.
+                    fixed = await loop.run_in_executor(None, _apply_tied_lm_head_fix)
+                    if fixed:
+                        logger.info("Retrying load after tied lm_head fix...")
+                        model = await _try_load()
+                    elif layer_shards_path.exists() and any(layer_shards_path.iterdir()):
+                        logger.warning(
+                            f"Load failed ({first_err}); clearing stale layer cache at "
+                            f"{layer_shards_path} and retrying..."
+                        )
+                        shutil.rmtree(layer_shards_path)
+                        layer_shards_path.mkdir(parents=True, exist_ok=True)
+                        model = await _try_load()
+                    else:
+                        raise
+                except RuntimeError:
+                    # Our own descriptive errors (e.g. single-file model) — propagate as-is.
+                    raise
+                except Exception as first_err:
+                    # Other unexpected failures: clear cache once and retry.
                     if layer_shards_path.exists() and any(layer_shards_path.iterdir()):
                         logger.warning(
                             f"Load failed ({first_err}); clearing stale layer cache at "
