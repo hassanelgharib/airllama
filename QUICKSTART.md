@@ -38,6 +38,11 @@ pip install -e .
 > ```
 > Standard PyPI torch wheels are x86-64 only and will not work on Jetson ARM64.
 > `numpy<2` is required — several AirLLM dependencies are not yet compatible with NumPy 2.x.
+>
+> **Important:** Leave `DEFAULT_COMPRESSION=` empty in `.env` on Jetson. The standard `bitsandbytes`
+> wheel does not include CUDA kernels for Jetson GPUs — enabling compression will cause a CUDA kernel
+> error during inference. See the README for instructions on building bitsandbytes from source if
+> quantization is needed.
 
 Verify the CLI is available:
 

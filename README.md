@@ -21,7 +21,7 @@ An Ollama-compatible server and CLI for running large language models locally us
 | Linux | ✅ | ✅ (NVIDIA GPU + CUDA) | Recommended platform for GPU inference |
 | macOS (Intel) | ✅ | ✅ (NVIDIA eGPU only) | Rare; treat as CPU-only in practice |
 | macOS (Apple Silicon) | ✅ | ❌ | No CUDA support — MPS/Metal not supported by bitsandbytes; CPU mode only |
-| NVIDIA Jetson (JetPack 6) | ✅ | ✅ (CUDA 12.6) | Requires custom PyTorch wheel — see [Jetson Installation](#jetson-installation) |
+| NVIDIA Jetson (JetPack 6) | ✅ | ⚠️ (requires building bitsandbytes from source) | Custom PyTorch wheel required — see [Jetson Installation](#jetson-installation) |
 
 > **`DEFAULT_COMPRESSION` must be left empty on any machine without an NVIDIA CUDA GPU.**
 
@@ -334,7 +334,21 @@ pip install -e .
 > `numpy<2` is required because several AirLLM dependencies are not yet compatible with NumPy 2.x.
 > All other packages still come from PyPI.
 
-4-bit/8-bit quantization is supported on Jetson — set `DEFAULT_COMPRESSION=4bit` or `8bit` in `.env` once the CUDA-enabled torch is installed.
+**Quantization on Jetson (optional)**
+
+The standard `bitsandbytes` PyPI wheel does **not** include compiled CUDA kernels for Jetson GPU architectures (sm_87 on Orin, sm_72 on Xavier). Running with `DEFAULT_COMPRESSION=4bit` or `8bit` will fail with a CUDA kernel error.
+
+Leave `DEFAULT_COMPRESSION=` empty (FP16 inference) — this is recommended for 3B–7B models on Jetson.
+
+If you need quantization, build bitsandbytes from source targeting your Jetson's compute capability:
+```bash
+git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git
+cd bitsandbytes
+cmake -DCOMPUTE_BACKEND=cuda -DCUDA_ARCHITECTURES="87" -S .
+make
+pip install .
+```
+Replace `87` with `72` for Xavier or `53` for older Nano boards.
 
 ---
 
@@ -364,6 +378,9 @@ pip install torch==2.8.0 torchvision==0.23.0 \
 pip install "numpy<2"
 ```
 Verify with `python -c "import torch; print(torch.cuda.is_available())"`.
+
+**Jetson — `Error named symbol not found` / `ops.cu` error during inference**
+The standard `bitsandbytes` PyPI wheel lacks CUDA kernels for Jetson GPU architectures. Set `DEFAULT_COMPRESSION=` (empty) in `.env` to use FP16 inference without quantization. See the [Jetson Installation](#jetson-installation) section if you need 4-bit/8-bit quantization.
 
 **Windows PowerShell 5.1 — curl returns HTML or an error**
 `curl` in PS 5.1 calls `Invoke-WebRequest`, not the real curl binary. Use `curl.exe` instead:
