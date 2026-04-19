@@ -1,345 +1,232 @@
-# Quick Start Guide - Testing the AirLLM API
+# Airllama — Quick Start
 
 ## Prerequisites
-- Python 3.10+ installed
-- ~5GB disk space for dependencies
-- (Optional) CUDA-capable GPU for faster inference
 
-## Installation Steps
+- Python 3.10+
+- ~5 GB disk space for dependencies + model cache
+- (Optional) NVIDIA GPU with CUDA for 4-bit/8-bit quantization
+  - **macOS Apple Silicon**: No CUDA support — CPU mode only (`DEFAULT_COMPRESSION=` empty)
+  - **Windows / Linux**: 4-bit/8-bit available with NVIDIA GPU + bitsandbytes
 
-### 1. Install Dependencies
+> **All curl examples below use the real `curl` binary.**
+> On Windows PowerShell 5.1, `curl` is an alias for `Invoke-WebRequest`. Use `curl.exe` explicitly, or upgrade to [PowerShell 7+](https://aka.ms/powershell).
 
-Choose ONE of these options:
+---
 
-#### Option A: Full Installation (Recommended)
+## 1. Install
+
 ```bash
-cd \\tana\dev\airllm-api
+# Clone
+git clone <your-repo-url>
+cd airllm-api-temp
+
+# Create venv
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS / Linux
+
+# Install dependencies + CLI
 pip install -r requirements.txt
+pip install -e .
 ```
 
-#### Option B: CPU-Only (Faster Install, Slower Inference)
+Verify the CLI is available:
+
 ```bash
-cd \\tana\dev\airllm-api
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install fastapi uvicorn[standard] pydantic pydantic-settings transformers airllm sse-starlette python-multipart aiofiles
+airllama --help
 ```
 
-#### Option C: Minimal (For API Structure Testing Only)
-```bash
-cd \\tana\dev\airllm-api
-pip install fastapi uvicorn pydantic pydantic-settings sse-starlette python-multipart aiofiles
-```
-⚠️ This won't work for actual inference, only for testing API structure
+---
 
-### 2. Create Configuration
+## 2. Configure the environment
+
 ```bash
-# Copy environment template
+# macOS / Linux
 cp .env.example .env
 
-# Optional: Edit .env
-notepad .env
+# Windows (PowerShell or cmd)
+copy .env.example .env
 ```
 
-**Recommended settings for testing:**
+Open `.env` and verify these key settings:
+
 ```env
 HOST=0.0.0.0
 PORT=11434
 MODEL_CACHE_DIR=~/.cache/airllm
-DEFAULT_COMPRESSION=4bit
+
+# Leave empty for CPU-only.
+# Set to 4bit or 8bit only when you have CUDA + bitsandbytes installed.
+DEFAULT_COMPRESSION=
+
 MAX_LOADED_MODELS=1
+HF_TOKEN=                 # Required for gated models (Llama 3, etc.)
+DEFAULT_MAX_LENGTH=2048
 DEFAULT_MAX_NEW_TOKENS=512
 ```
 
-### 3. Start the Server
+> **`MODEL_CACHE_DIR`** expands `~` correctly on all platforms:
+> - Windows: `C:\Users\<user>\.cache\airllm`
+> - Linux: `/home/<user>/.cache/airllm`
+> - macOS: `/Users/<user>/.cache/airllm`
+
+> **All platforms:** Never put a comment on the same line as a value.
+> `DEFAULT_COMPRESSION= # comment` will cause pydantic-settings to read `# comment` as the value.
+
+---
+
+## 3. Start the server
 
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 11434
+airllama serve
 ```
 
-You should see:
+Expected output:
+
 ```
-INFO:     Started server process
-INFO:     Waiting for application startup.
-INFO:     Starting AirLLM API server...
+INFO:     Starting Airllama server...
 INFO:     Version: 0.1.0
-INFO:     Model cache directory: C:\Users\YourUser\.cache\airllm
-INFO:     Default compression: 4bit
-INFO:     Model manager initialized
-INFO:     Application startup complete.
+# Windows:  Model cache: C:\Users\<user>\.cache\airllm
+# Linux:    Model cache: /home/<user>/.cache/airllm
+# macOS:    Model cache: /Users/<user>/.cache/airllm
+INFO:     Default compression: None
 INFO:     Uvicorn running on http://0.0.0.0:11434
 ```
 
-### 4. Test Basic Endpoints
+---
 
-Open a new terminal:
+## 4. Pull a model
+
+In a second terminal (with the venv activated):
 
 ```bash
-# Test health
+airllama pull TinyLlama/TinyLlama-1.1B-Chat-v1.0
+```
+
+Download progress is shown in the **server** terminal. The pull command will print status updates and confirm when complete.
+
+For gated models (e.g. Llama 3), set `HF_TOKEN=` in `.env` first.
+
+---
+
+## 5. Verify the model is registered
+
+```bash
+airllama list
+```
+
+---
+
+## 6. Test via curl
+
+> **Windows PowerShell 5.1:** Replace `curl` with `curl.exe` in every command below.
+> PowerShell 7+ and all Linux/macOS terminals work as shown.
+
+```bash
+# Health check
 curl http://localhost:11434/health
 
-# Test version
-curl http://localhost:11434/api/version
-
-# Test list models (empty initially)
+# List models
 curl http://localhost:11434/api/tags
-```
 
-Expected responses:
-```json
-// /health
-{"status":"healthy","version":"0.1.0","models_loaded":0,"models_registered":0}
-
-// /api/version
-{"version":"0.1.0"}
-
-// /api/tags
-{"models":[]}
-```
-
-## Testing with a Small Model
-
-### 1. Pull TinyLlama (600MB, good for testing)
-
-```bash
-curl http://localhost:11434/api/pull -d '{
-  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-}'
-```
-
-This will download and set up the model. First time takes 5-10 minutes.
-
-### 2. Test Generation
-
-```bash
-# Simple generation
+# Generate (non-streaming)
 curl http://localhost:11434/api/generate -d '{
   "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
   "prompt": "What is 2+2?",
   "stream": false
 }'
-```
 
-### 3. Test Chat
-
-```bash
+# Chat
 curl http://localhost:11434/api/chat -d '{
   "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-  "messages": [
-    {"role": "user", "content": "Tell me a short joke"}
-  ],
+  "messages": [{"role": "user", "content": "Tell me a short joke"}],
   "stream": false
 }'
-```
 
-### 4. Test Streaming
-
-```bash
-# Streaming generation (watch tokens appear in real-time)
+# Streaming generation
 curl http://localhost:11434/api/generate -d '{
   "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-  "prompt": "Count from 1 to 10:",
+  "prompt": "Count from 1 to 5:",
   "stream": true
 }'
+
+# OpenAI-compatible
+curl http://localhost:11434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
 ```
 
-### 5. Test OpenAI API
+---
+
+## 7. Run the included test script
 
 ```bash
-# OpenAI-compatible chat
-curl http://localhost:11434/v1/chat/completions -d '{
-  "model": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-  "messages": [{"role": "user", "content": "Hello!"}]
-}'
+python test_prompt.py
 ```
 
-## Using Python Clients
+This sends a single non-streaming request to `/api/generate` and prints the JSON response.
 
-### Install Clients
+---
+
+## 8. Interactive mode
+
+```bash
+airllama run TinyLlama/TinyLlama-1.1B-Chat-v1.0
+```
+
+Type your prompt and press Enter. Type `/bye` to exit.
+
+---
+
+## 9. Python clients
+
 ```bash
 pip install ollama openai
 ```
 
-### Ollama Python Client
+### Ollama
+
 ```python
 from ollama import Client
 
 client = Client(host='http://localhost:11434')
-
-# Pull model (if not already pulled)
 client.pull('TinyLlama/TinyLlama-1.1B-Chat-v1.0')
 
-# Generate
 response = client.generate(
     model='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
     prompt='Explain what AI is in one sentence.'
 )
 print(response['response'])
-
-# Chat
-response = client.chat(
-    model='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
-    messages=[
-        {'role': 'user', 'content': 'What is Python?'}
-    ]
-)
-print(response['message']['content'])
-
-# Streaming
-for chunk in client.generate(
-    model='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
-    prompt='Count to 20:',
-    stream=True
-):
-    print(chunk['response'], end='', flush=True)
 ```
 
-### OpenAI Python Client
+### OpenAI
+
 ```python
 from openai import OpenAI
 
-client = OpenAI(
-    base_url='http://localhost:11434/v1',
-    api_key='ollama'  # Required but unused
-)
+client = OpenAI(base_url='http://localhost:11434/v1', api_key='unused')
 
-# Chat completion
 response = client.chat.completions.create(
     model='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
-    messages=[
-        {'role': 'user', 'content': 'What is machine learning?'}
-    ]
+    messages=[{'role': 'user', 'content': 'What is Python?'}]
 )
 print(response.choices[0].message.content)
-
-# Streaming
-stream = client.chat.completions.create(
-    model='TinyLlama/TinyLlama-1.1B-Chat-v1.0',
-    messages=[{'role': 'user', 'content': 'Write a haiku about coding'}],
-    stream=True
-)
-for chunk in stream:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end='', flush=True)
 ```
-
-## Testing with Docker
-
-### Build Image
-```bash
-cd \\tana\dev\airllm-api
-docker build -t airllm-api .
-```
-
-### Run Container
-```bash
-# CPU-only
-docker run -d \
-  --name airllm-api \
-  -p 11434:11434 \
-  -v airllm-cache:/root/.cache/airllm \
-  airllm-api
-
-# With GPU
-docker run -d \
-  --name airllm-api \
-  --gpus all \
-  -p 11434:11434 \
-  -v airllm-cache:/root/.cache/airllm \
-  airllm-api
-```
-
-### Test
-```bash
-curl http://localhost:11434/health
-```
-
-## Troubleshooting
-
-### Problem: "No module named 'airllm'"
-**Solution:** Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-### Problem: "No module named 'torch'"
-**Solution:** Install PyTorch:
-```bash
-pip install torch transformers airllm
-```
-
-### Problem: "CUDA out of memory"
-**Solution:** Use CPU or smaller model:
-```bash
-# Set to CPU in .env
-DEFAULT_COMPRESSION=4bit
-
-# Or use CPU-only torch
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-```
-
-### Problem: Model download fails
-**Solution:** Check internet connection and disk space:
-```bash
-# Check space
-dir ~\.cache\airllm
-
-# Clear cache if needed
-rd /s ~\.cache\airllm
-```
-
-### Problem: "Address already in use"
-**Solution:** Change port in .env:
-```env
-PORT=11435
-```
-
-### Problem: Slow generation
-**Solution:** Enable compression:
-```env
-DEFAULT_COMPRESSION=4bit  # 3x faster with minimal quality loss
-```
-
-## Recommended Test Models
-
-| Model | Size | Best For | RAM Required |
-|-------|------|----------|--------------|
-| TinyLlama/TinyLlama-1.1B-Chat-v1.0 | 600MB | Testing | 2GB |
-| microsoft/phi-2 | 2.7GB | Small tasks | 4GB |
-| mistralai/Mistral-7B-Instruct-v0.2 | 7GB | General use | 8GB |
-| meta-llama/Llama-2-7b-chat-hf | 13GB | Chat | 12GB |
-
-## Automated Test Script
-
-Run the included test script:
-```bash
-python test_server.py
-```
-
-This will:
-1. Start server in background
-2. Test all basic endpoints
-3. Report results
-4. Shutdown server
-
-## Next Steps
-
-1. ✅ Verify server starts
-2. ✅ Test basic endpoints
-3. ✅ Pull a small model
-4. ✅ Test generation
-5. ✅ Test chat
-6. ✅ Test streaming
-7. ✅ Test with Python clients
-8. ⚠️ Test with your own models
-9. ⚠️ Test with production workload
-10. ⚠️ Add monitoring and logging
-
-## Support
-
-- GitHub Issues: [Your Repo URL]
-- AirLLM Docs: https://github.com/lyogavin/airllm
-- Ollama API Docs: https://github.com/ollama/ollama/blob/main/docs/api.md
 
 ---
 
-**Happy Testing! 🚀**
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `bitsandbytes` / CUDA error on CPU | Set `DEFAULT_COMPRESSION=` (empty) in `.env` |
+| macOS Apple Silicon — CUDA not found | No CUDA on Apple Silicon; leave `DEFAULT_COMPRESSION=` empty |
+| Pydantic reads comment as value | Move `.env` comments to their own lines |
+| Pull shows no progress | Watch the **server** terminal, not the client |
+| 401 on gated model | Set `HF_TOKEN=<token>` in `.env`, restart server |
+| Port already in use | Change `PORT=` in `.env` or stop the other process |
+| Windows PS 5.1 curl returns HTML | Use `curl.exe` instead of `curl` in PowerShell 5.1 |
+

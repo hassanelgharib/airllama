@@ -129,16 +129,21 @@ class ModelManager:
                 
                 if compression:
                     model_kwargs["compression"] = compression
-                elif settings.default_compression and settings.default_compression != "none":
+                elif settings.default_compression and settings.default_compression.lower() != "none":
                     model_kwargs["compression"] = settings.default_compression
                 
                 if settings.hf_token:
                     model_kwargs["hf_token"] = settings.hf_token
                 
                 model_kwargs.update(kwargs)
-                
-                # Load model
-                model = AutoModel.from_pretrained(model_name, **model_kwargs)
+
+                # Run the blocking AutoModel.from_pretrained in a thread so the
+                # event loop stays responsive during model initialisation.
+                loop = asyncio.get_running_loop()
+                model = await loop.run_in_executor(
+                    None,
+                    lambda: AutoModel.from_pretrained(model_name, **model_kwargs),
+                )
                 
                 # Store model info
                 model_info = {
@@ -273,20 +278,42 @@ class ModelManager:
         Yields:
             Progress updates if stream_progress is True
         """
+        from huggingface_hub import snapshot_download
+
         logger.info(f"Pulling model {model_name}")
-        
+
         if stream_progress:
             yield {"status": "pulling manifest"}
-        
+
         try:
-            # Loading the model will automatically download it
+            loop = asyncio.get_running_loop()
+
+            # Download all model files from HuggingFace Hub.
+            # Runs in a thread executor so the event loop is not blocked and
+            # huggingface_hub's tqdm progress bars are printed to the terminal.
+            download_kwargs = {"repo_id": model_name}
+            if settings.hf_token:
+                download_kwargs["token"] = settings.hf_token
+
+            if stream_progress:
+                yield {"status": "downloading"}
+
+            await loop.run_in_executor(
+                None,
+                lambda: snapshot_download(**download_kwargs),
+            )
+
+            if stream_progress:
+                yield {"status": "verifying sha256"}
+
+            # Initialise the AirLLM model object from the now-local cache.
             await self.load_model(model_name)
-            
+
             if stream_progress:
                 yield {"status": "success"}
-            
+
             logger.info(f"Successfully pulled model {model_name}")
-            
+
         except Exception as e:
             logger.error(f"Failed to pull model {model_name}: {e}")
             if stream_progress:

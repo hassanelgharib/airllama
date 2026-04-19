@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Optional
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,8 +21,18 @@ class Settings(BaseSettings):
     
     # Model Configuration
     model_cache_dir: str = "~/.cache/airllm"
-    default_compression: Optional[str] = "4bit"  # none, 4bit, or 8bit
+    default_compression: Optional[str] = None  # 4bit or 8bit require bitsandbytes + CUDA
     max_loaded_models: int = 1
+
+    @field_validator("default_compression", mode="before")
+    @classmethod
+    def normalise_compression(cls, v):
+        """Treat empty string, 'none', 'null' as no compression."""
+        if v is None:
+            return None
+        if str(v).strip().lower() in ("", "none", "null"):
+            return None
+        return v
     
     # HuggingFace Configuration
     hf_token: Optional[str] = None

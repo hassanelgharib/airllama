@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "airllama"
+version = "0.1.0"
+description = "Run large language models locally with an Ollama-compatible API"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi==0.110.0",
+    "uvicorn[standard]==0.29.0",
+    "airllm>=2.11.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "transformers>=4.35.0",
+    "torch>=2.0.0",
+    "sse-starlette==1.8.2",
+    "python-multipart==0.0.9",
+    "aiofiles==23.2.1",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+airllama = "cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.setuptools]
+py-modules = ["cli"]

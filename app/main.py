@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    logger.info("Starting AirLLM API server...")
+    logger.info("Starting Airllama server...")
     logger.info(f"Version: {__version__}")
     logger.info(f"Model cache directory: {settings.cache_path}")
     logger.info(f"Default compression: {settings.default_compression}")
@@ -33,13 +33,13 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    logger.info("Shutting down AirLLM API server...")
+    logger.info(f"Shutting down Airllama server...")
 
 
 # Create FastAPI app
 app = FastAPI(
-    title="AirLLM API",
-    description="Ollama-compatible API wrapper for AirLLM",
+    title="Airllama API",
+    description="Ollama-compatible API for running LLMs locally via AirLLM",
     version=__version__,
     lifespan=lifespan,
 )

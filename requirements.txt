@@ -3,8 +3,10 @@ uvicorn[standard]==0.29.0
 airllm>=2.11.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
-transformers>=4.35.0
+transformers>=4.35.0,<5.0
+optimum==1.23.3
 torch>=2.0.0
+sentencepiece
 sse-starlette==1.8.2
 python-multipart==0.0.9
 aiofiles==23.2.1

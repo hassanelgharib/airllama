@@ -1,4 +1,4 @@
-"""Command-line interface for AirLLM API."""
+"""Command-line interface for Airllama."""
 
 import asyncio
 import sys
@@ -7,131 +7,51 @@ from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.spinner import Spinner
+from rich.table import Table
 
 from app.config import settings
 from app.services.model_manager import model_manager
 
 # Initialize CLI app and console
 app = typer.Typer(
-    name="airllm",
-    help="AirLLM - Lightweight LLM API with model management",
+    name="airllama",
+    help="Airllama - Run large language models locally (Ollama-compatible CLI)",
     no_args_is_help=True,
 )
 console = Console()
 
-# Configure logging
+# Configure logging — quiet by default, verbose only when AIRLLAMA_DEBUG is set
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
 
-@app.command()
-def pull(model: str = typer.Argument(..., help="Model name to pull (e.g., TinyLlama/TinyLlama-1.1B-Chat-v1.0)")):
-    """Pull and cache a model locally.
-    
-    Examples:
-        airllm pull TinyLlama/TinyLlama-1.1B-Chat-v1.0
-        airllm pull microsoft/phi-2
-        airllm pull mistralai/Mistral-7B-Instruct-v0.2
-    """
-    console.print(f"[bold cyan]Pulling model:[/bold cyan] {model}")
-    
-    try:
-        # Initialize model manager if needed
-        model_manager._load_registry()
-        
-        # Run the async pull operation
-        asyncio.run(_pull_model(model))
-        
-        console.print(f"[bold green]✓ Successfully pulled model: {model}[/bold green]")
-        
-    except Exception as e:
-        console.print(f"[bold red]✗ Failed to pull model: {str(e)}[/bold red]", style="red")
-        raise typer.Exit(code=1)
-
-
-async def _pull_model(model_name: str):
-    """Internal async function to pull a model."""
-    with console.status("[bold cyan]Loading model...", spinner="dots"):
-        try:
-            async for progress in model_manager.pull_model(model_name, stream_progress=True):
-                if progress.get("status") == "error":
-                    raise Exception(progress.get("error", "Unknown error"))
-        except Exception as e:
-            raise Exception(f"Model loading failed: {str(e)}")
-
-
-@app.command()
-def list_models():
-    """List all cached models."""
-    try:
-        model_manager._load_registry()
-        
-        models = model_manager.list_models()
-        
-        if not models:
-            console.print("[yellow]No models cached yet.[/yellow]")
-            console.print("\nTo pull a model, use: [bold]airllm pull <model-name>[/bold]")
-            return
-        
-        console.print("\n[bold cyan]Cached Models:[/bold cyan]\n")
-        for model_meta in models:
-            console.print(f"[bold]{model_meta.name}[/bold]")
-            console.print(f"  Architecture: {model_meta.architecture}")
-            console.print(f"  Size: {model_meta.parameter_size}")
-            console.print(f"  Compression: {model_meta.quantization_level}")
-            console.print()
-            
-    except Exception as e:
-        console.print(f"[red]Error listing models: {str(e)}[/red]")
-        raise typer.Exit(code=1)
-
-
-@app.command()
-def remove(model: str = typer.Argument(..., help="Model name to remove")):
-    """Remove a cached model.
-    
-    Examples:
-        airllm remove TinyLlama/TinyLlama-1.1B-Chat-v1.0
-    """
-    try:
-        model_manager._load_registry()
-        
-        if model in model_manager.loaded_models:
-            del model_manager.loaded_models[model]
-            console.print(f"[bold green]✓ Removed model: {model}[/bold green]")
-        else:
-            console.print(f"[yellow]Model not found: {model}[/yellow]")
-            
-    except Exception as e:
-        console.print(f"[red]Error removing model: {str(e)}[/red]")
-        raise typer.Exit(code=1)
-
+# ---------------------------------------------------------------------------
+# serve
+# ---------------------------------------------------------------------------
 
 @app.command()
 def serve(
     host: str = typer.Option("0.0.0.0", help="Host to bind to"),
-    port: int = typer.Option(11434, help="Port to bind to"),
+    port: int = typer.Option(11434, help="Port to listen on"),
     reload: bool = typer.Option(False, "--reload", help="Enable auto-reload on file changes"),
 ):
-    """Start the AirLLM API server.
-    
+    """Start the Airllama server.
+
     Examples:
-        airllm serve
-        airllm serve --host 127.0.0.1 --port 8000
-        airllm serve --reload
+
+        airllama serve
+
+        airllama serve --host 127.0.0.1 --port 8080
     """
     import uvicorn
-    
-    console.print(f"[bold cyan]Starting AirLLM API server...[/bold cyan]")
-    console.print(f"  Host: {host}")
-    console.print(f"  Port: {port}")
-    console.print(f"  Auto-reload: {reload}")
-    console.print(f"  Cache directory: {settings.cache_path}\n")
-    
+
+    console.print(f"[bold green]Airllama[/bold green] server listening on [bold]{host}:{port}[/bold]")
+    console.print(f"  Cache directory : {settings.cache_path}")
+    console.print(f"  Compression     : {settings.default_compression or 'none'}\n")
+
     uvicorn.run(
         "app.main:app",
         host=host,
@@ -141,34 +61,253 @@ def serve(
     )
 
 
+# ---------------------------------------------------------------------------
+# pull
+# ---------------------------------------------------------------------------
+
 @app.command()
-def info():
-    """Show AirLLM configuration and status."""
+def pull(
+    model: str = typer.Argument(..., help="HuggingFace model ID to pull"),
+):
+    """Pull a model from HuggingFace and cache it locally.
+
+    Examples:
+
+        airllama pull TinyLlama/TinyLlama-1.1B-Chat-v1.0
+
+        airllama pull microsoft/phi-2
+
+        airllama pull mistralai/Mistral-7B-Instruct-v0.2
+    """
+    console.print(f"pulling manifest")
+
     try:
         model_manager._load_registry()
-        models = model_manager.list_models()
-        
-        console.print("\n[bold cyan]AirLLM Configuration:[/bold cyan]\n")
-        console.print(f"  Cache Directory: {settings.cache_path}")
-        console.print(f"  Default Compression: {settings.default_compression}")
-        console.print(f"  Max Loaded Models: {settings.max_loaded_models}")
-        console.print(f"  Max Length: {settings.default_max_length}")
-        console.print(f"  Max New Tokens: {settings.default_max_new_tokens}")
-        
-        console.print(f"\n[bold cyan]Status:[/bold cyan]\n")
-        console.print(f"  Loaded Models: {len(model_manager.loaded_models)}")
-        console.print(f"  Registered Models: {len(models)}")
-        console.print()
-        
+        asyncio.run(_pull_model(model))
+        console.print(f"[bold green]✓[/bold green] {model}")
     except Exception as e:
-        console.print(f"[red]Error getting info: {str(e)}[/red]")
+        console.print(f"[bold red]error[/bold red] {e}")
         raise typer.Exit(code=1)
 
 
+async def _pull_model(model_name: str):
+    async for progress in model_manager.pull_model(model_name, stream_progress=True):
+        status = progress.get("status", "")
+        if status == "error":
+            raise Exception(progress.get("error", "Unknown error"))
+        elif status and status not in ("success",):
+            console.print(status)
+
+
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+
+@app.command(name="list")
+def list_models():
+    """List models that are available locally.
+
+    Examples:
+
+        airllama list
+    """
+    try:
+        model_manager._load_registry()
+        models = model_manager.list_models()
+
+        if not models:
+            console.print("No models found. Pull one with: [bold]airllama pull <model>[/bold]")
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("NAME")
+        table.add_column("ARCHITECTURE")
+        table.add_column("SIZE")
+        table.add_column("COMPRESSION")
+        table.add_column("MODIFIED")
+
+        for m in models:
+            table.add_row(
+                m.name,
+                m.architecture,
+                m.parameter_size,
+                m.quantization_level or "none",
+                m.modified_at[:10] if m.modified_at else "",
+            )
+
+        console.print(table)
+
+    except Exception as e:
+        console.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# rm
+# ---------------------------------------------------------------------------
+
+@app.command()
+def rm(
+    model: str = typer.Argument(..., help="Model name to remove"),
+):
+    """Remove a model from local storage.
+
+    Examples:
+
+        airllama rm TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    """
+    try:
+        model_manager._load_registry()
+        asyncio.run(model_manager.delete_model(model))
+        console.print(f"deleted '{model}'")
+    except Exception as e:
+        console.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# show
+# ---------------------------------------------------------------------------
+
+@app.command()
+def show(
+    model: str = typer.Argument(..., help="Model name to inspect"),
+):
+    """Show information for a model.
+
+    Examples:
+
+        airllama show TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    """
+    try:
+        model_manager._load_registry()
+        meta = model_manager.registry.get(model)
+
+        if meta is None:
+            console.print(f"[red]error:[/red] model '{model}' not found locally. Pull it first.")
+            raise typer.Exit(code=1)
+
+        console.print(f"\n  [bold]Model[/bold]         {meta.name}")
+        console.print(f"  [bold]Architecture[/bold]  {meta.architecture}")
+        console.print(f"  [bold]Parameters[/bold]    {meta.parameter_size}")
+        console.print(f"  [bold]Compression[/bold]   {meta.quantization_level or 'none'}")
+        console.print(f"  [bold]Format[/bold]        {meta.format}")
+        console.print(f"  [bold]Families[/bold]      {', '.join(meta.families) if meta.families else '-'}")
+        console.print(f"  [bold]Modified[/bold]      {meta.modified_at[:10] if meta.modified_at else '-'}")
+        console.print()
+
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# ps  (running / loaded models)
+# ---------------------------------------------------------------------------
+
+@app.command()
+def ps():
+    """List models currently loaded in memory.
+
+    Examples:
+
+        airllama ps
+    """
+    try:
+        loaded = model_manager.loaded_models
+
+        if not loaded:
+            console.print("No models currently loaded.")
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("NAME")
+        table.add_column("LOADED AT")
+        table.add_column("LAST USED")
+        table.add_column("COMPRESSION")
+
+        for name, info in loaded.items():
+            table.add_row(
+                name,
+                info.get("loaded_at", "")[:19],
+                info.get("last_used", "")[:19],
+                info.get("compression") or "none",
+            )
+
+        console.print(table)
+
+    except Exception as e:
+        console.print(f"[red]error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+@app.command()
+def run(
+    model: str = typer.Argument(..., help="Model to run"),
+    prompt: Optional[str] = typer.Argument(None, help="Prompt to send (omit for interactive mode)"),
+    max_tokens: int = typer.Option(512, "--max-tokens", help="Maximum tokens to generate"),
+):
+    """Run a model and generate a response.
+
+    Examples:
+
+        airllama run TinyLlama/TinyLlama-1.1B-Chat-v1.0 "Why is the sky blue?"
+
+        airllama run microsoft/phi-2 "Write a poem about autumn"
+    """
+    if prompt is None:
+        # Interactive REPL
+        console.print(f"[bold green]Airllama[/bold green] — [bold]{model}[/bold]")
+        console.print("Type [bold]/bye[/bold] or Ctrl-C to exit.\n")
+        try:
+            while True:
+                user_input = typer.prompt(">>>")
+                if user_input.strip().lower() in ("/bye", "/exit", "/quit"):
+                    break
+                asyncio.run(_run_model(model, user_input, max_tokens))
+        except (KeyboardInterrupt, EOFError):
+            console.print("\nBye!")
+    else:
+        try:
+            asyncio.run(_run_model(model, prompt, max_tokens))
+        except Exception as e:
+            console.print(f"[red]error:[/red] {e}")
+            raise typer.Exit(code=1)
+
+
+async def _run_model(model_name: str, prompt: str, max_tokens: int):
+    from app.services.generation import generation_service
+
+    model_info = await model_manager.get_model(model_name)
+    model_obj = model_info["model"]
+    tokenizer = model_info["tokenizer"]
+
+    console.print()
+    async for chunk in generation_service.stream_completion(
+        model=model_obj,
+        tokenizer=tokenizer,
+        prompt=prompt,
+        max_new_tokens=max_tokens,
+    ):
+        if chunk.get("token"):
+            console.print(chunk["token"], end="", highlight=False)
+    console.print("\n")
+
+
+# ---------------------------------------------------------------------------
+# entry point
+# ---------------------------------------------------------------------------
+
 def main():
-    """Main entry point for CLI."""
     app()
 
 
 if __name__ == "__main__":
     main()
+
