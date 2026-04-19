@@ -107,10 +107,20 @@ class GenerationService:
         queue: asyncio.Queue = asyncio.Queue()
 
         def _run_generate():
+            # Redirect stdout to /dev/null so AirLLM's print() calls
+            # ("either BetterTransformer...", layer-save messages, etc.)
+            # don't interleave with streamed token output.
+            import os as _os
+            _devnull = open(_os.devnull, "w")
+            _old_stdout = sys.stdout
+            sys.stdout = _devnull
             try:
                 model.generate(**gen_kwargs)
             except Exception as exc:
                 loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+            finally:
+                sys.stdout = _old_stdout
+                _devnull.close()
 
         def _consume_streamer():
             for token_text in streamer:  # blocks until each token is ready

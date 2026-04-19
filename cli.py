@@ -262,26 +262,30 @@ def run(
         airllama run microsoft/phi-2 "Write a poem about autumn"
     """
     if prompt is None:
-        # Interactive REPL
+        # Interactive REPL with multi-turn history
         console.print(f"[bold green]Airllama[/bold green] — [bold]{model}[/bold]")
         console.print("Type [bold]/bye[/bold] or Ctrl-C to exit.\n")
+        history: list = []
         try:
             while True:
                 user_input = typer.prompt(">>>")
                 if user_input.strip().lower() in ("/bye", "/exit", "/quit"):
                     break
-                asyncio.run(_run_model(model, user_input, max_tokens))
+                history.append({"role": "user", "content": user_input})
+                response = asyncio.run(_run_model(model, list(history), max_tokens))
+                if response:
+                    history.append({"role": "assistant", "content": response})
         except (KeyboardInterrupt, EOFError):
             console.print("\nBye!")
     else:
         try:
-            asyncio.run(_run_model(model, prompt, max_tokens))
+            asyncio.run(_run_model(model, [{"role": "user", "content": prompt}], max_tokens))
         except Exception as e:
             console.print(f"[red]error:[/red] {e}")
             raise typer.Exit(code=1)
 
 
-async def _run_model(model_name: str, prompt: str, max_tokens: int):
+async def _run_model(model_name: str, messages: list, max_tokens: int) -> str:
     from app.services.generation import generation_service
 
     model_info = await model_manager.get_model(model_name)
@@ -289,15 +293,19 @@ async def _run_model(model_name: str, prompt: str, max_tokens: int):
     tokenizer = model_info["tokenizer"]
 
     console.print()
-    async for chunk in generation_service.stream_completion(
+    parts: list = []
+    async for chunk in generation_service.stream_chat_completion(
         model=model_obj,
         tokenizer=tokenizer,
-        prompt=prompt,
+        messages=messages,
         max_new_tokens=max_tokens,
     ):
-        if chunk.get("token"):
-            console.print(chunk["token"], end="", highlight=False)
+        token = chunk.get("token", "")
+        if token:
+            console.print(token, end="", highlight=False)
+            parts.append(token)
     console.print("\n")
+    return "".join(parts)
 
 
 # ---------------------------------------------------------------------------
