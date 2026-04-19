@@ -10,7 +10,13 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
 from airllm import AutoModel
+from airllm.airllm_base import AirLLMBaseModel
 from transformers import AutoConfig
+
+# Newer transformers (≥4.40) requires GenerationMixin subclasses to declare
+# _is_stateful. The installed airllm package predates this requirement.
+if not hasattr(AirLLMBaseModel, "_is_stateful"):
+    AirLLMBaseModel._is_stateful = False
 
 from app.config import settings
 
